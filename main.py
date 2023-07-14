@@ -1,6 +1,9 @@
 import numpy as np
 from Infrastructure.utils import *
 from nn_models import *
+from models import *
+from exact_solutions import *
+import matplotlib.pyplot as plt
 
 np.random.seed(42)
 # User settings
@@ -110,3 +113,104 @@ def create_network(inputs):
               )))/localisation_parameter
 
     return outputs_dnn + localisation
+
+%%time
+if load_model:
+    # Load model from local folder. If it is not availabe, download it.
+    os.makedirs('model/variables', exist_ok=True)
+    url_base = 'https://github.com/LWunderlich/DeepPDE/raw/main/TwoAssetsExample/'
+    filename = 'model/saved_model.pb'
+    if not os.path.isfile(filename):
+        urllib.request.urlretrieve(url_base + filename, filename)
+
+    filename = 'model/variables/variables.data-00000-of-00001'
+    if not os.path.isfile(filename):
+        urllib.request.urlretrieve(url_base + filename, filename)
+
+    filename = 'model/variables/variables.index'
+    if not os.path.isfile(filename):
+        urllib.request.urlretrieve(url_base + filename, filename)
+
+    model = keras.models.load_model('model')
+else:
+    # Create and train model from scratch.
+    inputs = keras.Input(shape=(dimension_total,))
+    outputs = create_network(inputs)
+    model = DPDEModel(inputs=inputs, outputs=outputs)
+    batch_generator = DPDEGenerator(n_train)
+    model.compile(optimizer=tf.keras.optimizers.Adam(initial_learning_rate))
+    callback = tf.keras.callbacks.EarlyStopping(
+        'loss', patience=50, restore_best_weights=True)
+
+    model.fit(x=batch_generator, epochs=nr_epochs, steps_per_epoch=10,
+                          callbacks=[callback])
+
+test_solution = exact_solution(t=4., s1=100., s2=100., riskfree_rate=0.2,
+                               volatility1=0.1, volatility2=0.3, correlation=0.5)
+assert (np.abs(test_solution - 55.096796282039364) < 1e-10)
+
+s1_plot_mesh, s2_plot_mesh, x_plot_normalised = \
+    get_points_for_plot_at_fixed_time()
+
+DPDE_solution = model.predict(x_plot_normalised).reshape(
+    nr_samples_surface_plot, nr_samples_surface_plot)
+
+exact_solution_evaluated = [exact_solution(t=t_max, s1=s1[0], s2=s2[0],
+                                riskfree_rate=riskfree_rate_eval,
+                                volatility1=volatility1_eval,
+                                volatility2=volatility2_eval,
+                                correlation=correlation_eval)
+                  for s1, s2 in zip(
+                      s1_plot_mesh.reshape(-1, 1), s2_plot_mesh.reshape(-1, 1))
+
+                  ]
+exact_solution_evaluated = np.array(exact_solution_evaluated)
+exact_solution_evaluated = exact_solution_evaluated.reshape(
+    nr_samples_surface_plot, nr_samples_surface_plot)
+
+localisation_plot = localisation(4., s1_plot_mesh, s2_plot_mesh, riskfree_rate_eval)
+
+
+fig = plt.figure()
+ax = plt.axes(projection='3d')
+
+ax.plot_surface(s1_plot_mesh, s2_plot_mesh, DPDE_solution, cmap='viridis')
+ax.set_title('DPDE Solution')
+ax.set_xlabel('$s_1$')
+ax.set_ylabel('$s_2$')
+plt.show()
+
+####
+
+fig = plt.figure()
+ax = plt.axes(projection='3d')
+
+dnn_part = DPDE_solution - localisation_plot
+ax.plot_surface(s1_plot_mesh, s2_plot_mesh, dnn_part, cmap='viridis')
+ax.set_title('DNN part')
+ax.set_xlabel('$s_1$')
+ax.set_ylabel('$s_2$')
+plt.show()
+
+###
+
+fig = plt.figure()
+ax = plt.axes(projection='3d')
+
+ax.plot_surface(s1_plot_mesh, s2_plot_mesh, localisation_plot, cmap='viridis')
+ax.set_title('Localisation')
+ax.set_xlabel('$s_1$')
+ax.set_ylabel('$s_2$')
+plt.show()
+
+###
+fig = plt.figure()
+ax = plt.axes(projection='3d')
+
+ax.plot_surface(s1_plot_mesh, s2_plot_mesh, exact_solution_evaluated, cmap='viridis')
+ax.set_title('Exact solution')
+ax.set_xlabel('$s_1$')
+ax.set_ylabel('$s_2$')
+plt.show()
+
+###
