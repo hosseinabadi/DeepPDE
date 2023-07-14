@@ -1,5 +1,6 @@
 import numpy as np
 from Infrastructure.utils import *
+from nn_models import *
 
 np.random.seed(42)
 # User settings
@@ -63,3 +64,49 @@ riskfree_rate_eval_normalised = normalise_riskfree_rate(riskfree_rate_eval)
 volatility1_eval_normalised = normalise_volatility(volatility1_eval)
 volatility2_eval_normalised = normalise_volatility(volatility2_eval)
 correlation_eval_normalised = normalise_correlation(correlation_eval)
+
+
+def create_network(inputs):
+    """ Creates the neural network by creating three highway layers and an
+    output layer. Returns the output of these layers as a tensorflow variable.
+
+    Keyword arguments:
+    inputs -- Tensorflow variable of the input layer
+    """
+    layer0 = keras.layers.Dense(nr_nodes_per_layer, activation="tanh")
+
+    layer1 = HighwayLayer(units=nr_nodes_per_layer,
+                          original_input=dimension_total)
+    layer2 = HighwayLayer(units=nr_nodes_per_layer,
+                          original_input=dimension_total)
+    layer3 = HighwayLayer(units=nr_nodes_per_layer,
+                          original_input=dimension_total)
+
+    last_layer = keras.layers.Dense(1)
+
+    outputs_layer0 = layer0(inputs)
+    outputs_layer1 = layer1({'previous_layer': outputs_layer0,
+                             'original_variable': inputs})
+    outputs_layer2 = layer2({'previous_layer': outputs_layer1,
+                             'original_variable': inputs})
+    outputs_layer3 = layer3({'previous_layer': outputs_layer2,
+                             'original_variable': inputs})
+
+    outputs_dnn = last_layer(outputs_layer3)
+
+    inputs_t_normalised = inputs[:, 0:1]
+    inputs_x1_normalised = inputs[:, 1:2]
+    inputs_x2_normalised = inputs[:, 2:3]
+    inputs_p1_normalised = inputs[:, 3:4]
+
+    inputs_t = transform_to_time(inputs_t_normalised)
+    inputs_x1 = transform_to_logprice(inputs_x1_normalised)
+    inputs_x2 = transform_to_logprice(inputs_x2_normalised)
+    inputs_s_mean = (tf.math.exp(inputs_x1) + tf.math.exp(inputs_x2))/2.
+    riskfree_rate = transform_to_riskfree_rate(inputs_p1_normalised)
+
+    localisation = tf.math.log(1+tf.math.exp(localisation_parameter * (
+            inputs_s_mean - strike_price * tf.exp( - riskfree_rate * inputs_t)
+              )))/localisation_parameter
+
+    return outputs_dnn + localisation
